@@ -11,7 +11,7 @@ from typing import Any
 
 import httpx
 import yaml
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
 
 DEFAULT_CONFIG = Path("config.yaml")
@@ -75,9 +75,22 @@ def column_index(headers: list[str], name: str) -> int:
     raise RuntimeError(f"cannot locate column {name!r}; headers={headers!r}")
 
 
-def load_registration(config: dict[str, Any]) -> tuple[list[RegistrationRow], list[dict[str, Any]]]:
+def merge_registration_config(config: dict[str, Any], cluster: dict[str, Any]) -> dict[str, Any]:
+    defaults = dict(config.get("registration_defaults") or {})
+    legacy = dict(config.get("registration") or {})
+    cluster_registration = dict(cluster.get("registration") or {})
+    merged = {**defaults, **legacy, **cluster_registration}
+    if not merged.get("xlsx_path"):
+        raise RuntimeError(f"cluster {cluster.get('name')} missing registration.xlsx_path")
+    return merged
+
+
+def load_registration(
+    config: dict[str, Any],
+    cluster: dict[str, Any] | None = None,
+) -> tuple[list[RegistrationRow], list[dict[str, Any]], dict[str, Any]]:
     base_dir = Path(config["_base_dir"])
-    reg_cfg = config["registration"]
+    reg_cfg = merge_registration_config(config, cluster or {})
     account_cfg = config.get("account", {})
     xlsx_path = resolve_path(reg_cfg["xlsx_path"], base_dir)
     wb = load_workbook(xlsx_path, read_only=True, data_only=True)
@@ -138,7 +151,12 @@ def load_registration(config: dict[str, Any]) -> tuple[list[RegistrationRow], li
             )
         )
 
-    return accounts, warnings
+    source = {
+        "xlsx_path": str(xlsx_path),
+        "sheet_name": ws.title,
+        "total_accounts": len(accounts),
+    }
+    return accounts, warnings, source
 
 
 class GZCTFClient:
@@ -226,6 +244,98 @@ def account_to_public_dict(account: RegistrationRow, include_password: bool = Fa
     return value
 
 
+def write_result_workbook(output: dict[str, Any], path: Path) -> None:
+    wb = Workbook()
+    summary = wb.active
+    summary.title = "summary"
+    summary.append(
+        [
+            "cluster",
+            "base_url",
+            "registration_file",
+            "registration_sheet",
+            "total_planned",
+            "created",
+            "already_exists",
+            "failed",
+            "dry_run",
+            "config_restored",
+        ]
+    )
+    details = wb.create_sheet("accounts")
+    details.append(
+        [
+            "cluster",
+            "row",
+            "name",
+            "phone",
+            "unit",
+            "department",
+            "username",
+            "email",
+            "password",
+            "status",
+            "http_status",
+            "message",
+        ]
+    )
+    warnings_sheet = wb.create_sheet("warnings")
+    warnings_sheet.append(["cluster", "type", "row", "name", "phone", "message"])
+
+    for cluster_result in output.get("clusters", []):
+        source = cluster_result.get("registration_source") or {}
+        summary.append(
+            [
+                cluster_result.get("cluster"),
+                cluster_result.get("base_url"),
+                source.get("xlsx_path"),
+                source.get("sheet_name"),
+                cluster_result.get("total_planned"),
+                cluster_result.get("created"),
+                cluster_result.get("already_exists"),
+                cluster_result.get("failed"),
+                cluster_result.get("dry_run"),
+                cluster_result.get("config_restored"),
+            ]
+        )
+        for item in cluster_result.get("items", []):
+            details.append(
+                [
+                    cluster_result.get("cluster"),
+                    item.get("row"),
+                    item.get("name"),
+                    item.get("phone"),
+                    item.get("unit"),
+                    item.get("department"),
+                    item.get("username"),
+                    item.get("email"),
+                    item.get("password"),
+                    item.get("status"),
+                    item.get("http_status"),
+                    item.get("message"),
+                ]
+            )
+        for warning in cluster_result.get("warnings", []):
+            warnings_sheet.append(
+                [
+                    cluster_result.get("cluster"),
+                    warning.get("type"),
+                    warning.get("row"),
+                    warning.get("name"),
+                    warning.get("phone"),
+                    warning.get("message") or json.dumps(warning, ensure_ascii=False),
+                ]
+            )
+
+    for worksheet in wb.worksheets:
+        for column_cells in worksheet.columns:
+            max_len = max(len(str(cell.value or "")) for cell in column_cells)
+            worksheet.column_dimensions[column_cells[0].column_letter].width = min(max(max_len + 2, 10), 48)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    wb.save(path)
+
+
 def build_enabled_registration_config(original: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
     payload = deepcopy(original)
     for key, value in updates.items():
@@ -245,6 +355,8 @@ def run_cluster(
     result = {
         "cluster": cluster["name"],
         "base_url": cluster["base_url"],
+        "registration_source": cluster.get("_registration_source", {}),
+        "warnings": cluster.get("_registration_warnings", []),
         "dry_run": dry_run,
         "total_planned": len(selected_accounts),
         "created": 0,
@@ -313,20 +425,30 @@ def main() -> None:
     args = parser.parse_args()
 
     config = load_config(args.config)
-    accounts, warnings = load_registration(config)
     output = {
-        "source": config["registration"]["xlsx_path"],
-        "total_accounts": len(accounts),
-        "warnings": warnings,
+        "warnings": [],
     }
 
     if args.check_excel:
-        output["sample"] = [
-            account_to_public_dict(account, include_password=args.print_passwords)
-            for account in accounts[:20]
-        ]
+        clusters = config.get("gzctf", {}).get("clusters") or [{"name": "default"}]
+        output["clusters"] = []
+        for cluster in clusters:
+            accounts, warnings, source = load_registration(config, cluster)
+            output["clusters"].append(
+                {
+                    "cluster": cluster.get("name", "default"),
+                    "registration_source": source,
+                    "total_accounts": len(accounts),
+                    "warnings": warnings,
+                    "sample": [
+                        account_to_public_dict(account, include_password=args.print_passwords)
+                        for account in accounts[:20]
+                    ],
+                }
+            )
         print(json.dumps(output, ensure_ascii=False, indent=2))
-        sys.exit(0 if not warnings else 1)
+        has_warnings = any(cluster.get("warnings") for cluster in output["clusters"])
+        sys.exit(0 if not has_warnings else 1)
 
     registration_settings = config.get("registration_settings") or {}
     clusters = config.get("gzctf", {}).get("clusters") or []
@@ -335,6 +457,10 @@ def main() -> None:
 
     output["clusters"] = []
     for cluster in clusters:
+        accounts, warnings, source = load_registration(config, cluster)
+        cluster = dict(cluster)
+        cluster["_registration_warnings"] = warnings
+        cluster["_registration_source"] = source
         output["clusters"].append(
             run_cluster(
                 cluster=cluster,
@@ -350,6 +476,9 @@ def main() -> None:
     if result_file:
         path = resolve_path(result_file, Path(config["_base_dir"]))
         path.write_text(json.dumps(output, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    xlsx_file = config.get("output", {}).get("xlsx_file")
+    if xlsx_file:
+        write_result_workbook(output, resolve_path(xlsx_file, Path(config["_base_dir"])))
 
     print(json.dumps(output, ensure_ascii=False, indent=2))
 

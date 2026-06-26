@@ -1,6 +1,4 @@
-registration:
-  xlsx_path: "C:/Users/18014/OneDrive/Desktop/AI代码马拉松报名信息.xlsx"
-  sheet_name: "6.24去除重复项"
+registration_defaults:
   name_column: "姓名"
   unit_column: "单位"
   department_column: "部门"
@@ -14,9 +12,21 @@ gzctf:
   clusters:
     - name: "cluster-117"
       base_url: "http://100.99.32.117:8080"
-      admin_username_env: "GZCTF_ADMIN_USERNAME"
-      admin_password_env: "GZCTF_ADMIN_PASSWORD"
+      admin_username_env: "GZCTF_ADMIN_USERNAME_117"
+      admin_password_env: "GZCTF_ADMIN_PASSWORD_117"
       config_update_method: "auto"
+      registration:
+        xlsx_path: "C:/Users/18014/OneDrive/Desktop/AI代码马拉松报名信息.xlsx"
+        sheet_name: "6.24去除重复项"
+
+    - name: "cluster-b"
+      base_url: "http://example-cluster-b:8080"
+      admin_username_env: "GZCTF_ADMIN_USERNAME_B"
+      admin_password_env: "GZCTF_ADMIN_PASSWORD_B"
+      config_update_method: "auto"
+      registration:
+        xlsx_path: "C:/path/to/cluster-b-registration.xlsx"
+        sheet_name: "Sheet1"
 
 registration_settings:
   allowRegister: true
@@ -26,3 +36,4 @@ registration_settings:
 
 output:
   result_file: "account-register-result.json"
+  xlsx_file: "account-register-result.xlsx"
