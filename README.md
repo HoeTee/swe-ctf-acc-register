@@ -68,6 +68,11 @@ account:
   email_domain: "zjrcu.com"
   password: "Zjrcu{phone_last4}"
 
+team:
+  create: true
+  name: "name"
+  bio: null
+
 gzctf:
   clusters:
     - name: "cluster-117"
@@ -95,6 +100,21 @@ output:
 `account.username` 默认使用手机号本身。不要把它设置成 `phone_email`，GZCTF 的 `userName` 字段长度限制会拒绝 `15958153463@zjrcu.com` 这类值。
 
 `account.password` 不建议使用 `phone_last4`，因为 GZCTF 当前密码策略会拒绝 4 位密码，并且要求包含大写字母。推荐使用 `Zjrcu{phone_last4}`，例如 `Zjrcu3463`。
+
+`team.create` 默认为 `true`。账号创建成功或账号已存在后，脚本会用该用户登录，然后调用：
+
+```text
+POST /api/team
+```
+
+队伍名默认使用报名表姓名：
+
+```json
+{
+  "name": "常云凡",
+  "bio": null
+}
+```
 
 ## 管理员账号
 
@@ -184,9 +204,11 @@ account-register-result.xlsx
    useCaptcha: false
    emailConfirmationRequired: false
 6. POST /api/account/register 批量注册
-7. 重新登录管理员账号
-8. 默认恢复原 /api/admin/config
-9. 写入 JSON 和 Excel 结果表
+7. 对创建成功或已存在的账号，使用该用户登录
+8. POST /api/team 创建以姓名命名的队伍
+9. 重新登录管理员账号
+10. 默认恢复原 /api/admin/config
+11. 写入 JSON 和 Excel 结果表
 ```
 
 GZCTF 注册成功后可能会把当前 cookie 登录态切换成新注册用户，所以脚本在恢复平台配置前会重新登录管理员，否则恢复 `/api/admin/config` 可能返回 403。
@@ -223,7 +245,7 @@ Excel 包含三个 sheet：
 
 ```text
 summary    每个集群注册汇总
-accounts   每个用户账号、密码、状态、HTTP 状态码和返回消息
+accounts   每个用户账号、密码、注册状态、队伍状态、HTTP 状态码和返回消息
 warnings   报名表问题或跳过原因
 ```
 
@@ -234,6 +256,7 @@ planned
 created
 already_exists
 failed
+skipped
 ```
 
 ## 排障

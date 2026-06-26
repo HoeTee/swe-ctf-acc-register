@@ -10,6 +10,11 @@ account:
   email_domain: "zjrcu.com"
   password: "Zjrcu{phone_last4}"
 
+team:
+  create: true
+  name: "name"
+  bio: null
+
 gzctf:
   clusters:
     - name: "cluster-117"

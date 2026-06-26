@@ -71,6 +71,29 @@ def render_account_value(pattern: str, phone: str, name: str, email_domain: str)
     )
 
 
+def render_row_value(pattern: Any, account: RegistrationRow) -> Any:
+    if pattern is None:
+        return None
+    text = str(pattern)
+    if text == "name":
+        return account.name
+    if text == "phone":
+        return account.phone
+    if text == "username":
+        return account.username
+    if text == "email":
+        return account.email
+    return text.format(
+        row=account.row,
+        name=account.name,
+        phone=account.phone,
+        unit=account.unit,
+        department=account.department,
+        username=account.username,
+        email=account.email,
+    )
+
+
 def resolve_path(path_value: str, base_dir: Path) -> Path:
     path = Path(path_value)
     if path.is_absolute():
@@ -194,6 +217,9 @@ class GZCTFClient:
     def close(self) -> None:
         self.client.close()
 
+    def clear_session(self) -> None:
+        self.client.cookies.clear()
+
     def admin_credentials(self) -> tuple[str, str]:
         username = self.cluster.get("admin_username")
         password = self.cluster.get("admin_password")
@@ -211,6 +237,20 @@ class GZCTFClient:
         username, password = self.admin_credentials()
         response = self.client.post("/api/account/login", json={"userName": username, "password": password})
         response.raise_for_status()
+
+    def login_user(self, account: RegistrationRow) -> dict[str, Any]:
+        try:
+            response = self.client.post(
+                "/api/account/login",
+                json={"userName": account.username, "password": account.password},
+            )
+        except httpx.TimeoutException as exc:
+            return {"status": "failed", "http_status": None, "message": f"timeout: {exc}"}
+        except httpx.HTTPError as exc:
+            return {"status": "failed", "http_status": None, "message": f"http_error: {exc}"}
+        if response.status_code in {200, 201, 204}:
+            return {"status": "logged_in", "http_status": response.status_code}
+        return {"status": "failed", "http_status": response.status_code, "message": response.text[:1000]}
 
     def get_platform_config(self) -> dict[str, Any]:
         response = self.client.get("/api/admin/config")
@@ -258,6 +298,47 @@ class GZCTFClient:
             return {"status": "already_exists", "http_status": response.status_code, "message": text[:500]}
         return {"status": "failed", "http_status": response.status_code, "message": text[:1000]}
 
+    def create_team(self, account: RegistrationRow, team_config: dict[str, Any]) -> dict[str, Any]:
+        name = render_row_value(team_config.get("name", "name"), account)
+        bio = render_row_value(team_config.get("bio"), account)
+        payload = {"name": name, "bio": bio}
+        try:
+            response = self.client.post("/api/team", json=payload)
+        except httpx.TimeoutException as exc:
+            return {
+                "team_status": "failed",
+                "team_http_status": None,
+                "team_name": name,
+                "team_message": f"timeout: {exc}",
+            }
+        except httpx.HTTPError as exc:
+            return {
+                "team_status": "failed",
+                "team_http_status": None,
+                "team_name": name,
+                "team_message": f"http_error: {exc}",
+            }
+        text = response.text
+        if response.status_code in {200, 201, 204}:
+            return {"team_status": "created", "team_http_status": response.status_code, "team_name": name}
+        lowered = text.lower()
+        if response.status_code in {400, 409} and any(
+            marker in lowered
+            for marker in ["duplicate", "already", "exist", "taken", "joined", "already in a team"]
+        ):
+            return {
+                "team_status": "already_exists",
+                "team_http_status": response.status_code,
+                "team_name": name,
+                "team_message": text[:500],
+            }
+        return {
+            "team_status": "failed",
+            "team_http_status": response.status_code,
+            "team_name": name,
+            "team_message": text[:1000],
+        }
+
 
 def account_to_public_dict(account: RegistrationRow, include_password: bool = False) -> dict[str, Any]:
     value = {
@@ -288,6 +369,9 @@ def write_result_workbook(output: dict[str, Any], path: Path) -> None:
             "created",
             "already_exists",
             "failed",
+            "teams_created",
+            "teams_already_exists",
+            "teams_failed",
             "dry_run",
             "config_restored",
         ]
@@ -307,6 +391,10 @@ def write_result_workbook(output: dict[str, Any], path: Path) -> None:
             "status",
             "http_status",
             "message",
+            "team_name",
+            "team_status",
+            "team_http_status",
+            "team_message",
         ]
     )
     warnings_sheet = wb.create_sheet("warnings")
@@ -324,6 +412,9 @@ def write_result_workbook(output: dict[str, Any], path: Path) -> None:
                 cluster_result.get("created"),
                 cluster_result.get("already_exists"),
                 cluster_result.get("failed"),
+                cluster_result.get("teams_created"),
+                cluster_result.get("teams_already_exists"),
+                cluster_result.get("teams_failed"),
                 cluster_result.get("dry_run"),
                 cluster_result.get("config_restored"),
             ]
@@ -343,6 +434,10 @@ def write_result_workbook(output: dict[str, Any], path: Path) -> None:
                     item.get("status"),
                     item.get("http_status"),
                     item.get("message"),
+                    item.get("team_name"),
+                    item.get("team_status"),
+                    item.get("team_http_status"),
+                    item.get("team_message"),
                 ]
             )
         for warning in cluster_result.get("warnings", []):
@@ -400,6 +495,7 @@ def run_cluster(
     keep_register_open: bool,
     progress_every: int,
     failure_details: int,
+    team_config: dict[str, Any],
     on_update: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     selected_accounts = accounts[:limit] if limit else accounts
@@ -413,6 +509,9 @@ def run_cluster(
         "created": 0,
         "already_exists": 0,
         "failed": 0,
+        "teams_created": 0,
+        "teams_already_exists": 0,
+        "teams_failed": 0,
         "items": [],
         "config_update_method": None,
         "config_restored": False,
@@ -420,7 +519,12 @@ def run_cluster(
 
     if dry_run:
         result["items"] = [
-            {**account_to_public_dict(account, include_password=True), "status": "planned"}
+            {
+                **account_to_public_dict(account, include_password=True),
+                "status": "planned",
+                "team_name": render_row_value(team_config.get("name", "name"), account),
+                "team_status": "planned" if team_config.get("create", True) else "skipped",
+            }
             for account in selected_accounts
         ]
         if on_update:
@@ -442,20 +546,42 @@ def run_cluster(
             method=str(cluster.get("config_update_method", "auto")),
         )
         for index, account in enumerate(selected_accounts, start=1):
+            client.clear_session()
             register_result = client.register_account(account)
             status = register_result["status"]
+            item = {
+                **account_to_public_dict(account, include_password=True),
+                **register_result,
+            }
             if status == "created":
                 result["created"] += 1
             elif status == "already_exists":
                 result["already_exists"] += 1
             else:
                 result["failed"] += 1
-            result["items"].append(
-                {
-                    **account_to_public_dict(account, include_password=True),
-                    **register_result,
-                }
-            )
+
+            if team_config.get("create", True) and status in {"created", "already_exists"}:
+                login_result = client.login_user(account)
+                if login_result["status"] == "logged_in":
+                    team_result = client.create_team(account, team_config)
+                else:
+                    team_result = {
+                        "team_status": "failed",
+                        "team_http_status": login_result.get("http_status"),
+                        "team_name": render_row_value(team_config.get("name", "name"), account),
+                        "team_message": f"user login failed: {login_result.get('message')}",
+                    }
+                item.update(team_result)
+                if item["team_status"] == "created":
+                    result["teams_created"] += 1
+                elif item["team_status"] == "already_exists":
+                    result["teams_already_exists"] += 1
+                else:
+                    result["teams_failed"] += 1
+            elif not team_config.get("create", True):
+                item["team_status"] = "skipped"
+
+            result["items"].append(item)
             if status == "failed" and shown_failures < failure_details:
                 shown_failures += 1
                 typer.echo(
@@ -465,12 +591,23 @@ def run_cluster(
                     f"message={compact_message(register_result.get('message'))}",
                     err=True,
                 )
+            if item.get("team_status") == "failed" and shown_failures < failure_details:
+                shown_failures += 1
+                typer.echo(
+                    f"[{cluster['name']}] team failed row={account.row} "
+                    f"name={account.name} username={account.username} "
+                    f"http={item.get('team_http_status')} "
+                    f"message={compact_message(item.get('team_message'))}",
+                    err=True,
+                )
             if on_update:
                 on_update(result)
             if progress_every > 0 and (index == 1 or index % progress_every == 0 or index == len(selected_accounts)):
                 typer.echo(
                     f"[{cluster['name']}] {index}/{len(selected_accounts)} "
-                    f"created={result['created']} already_exists={result['already_exists']} failed={result['failed']}"
+                    f"created={result['created']} already_exists={result['already_exists']} failed={result['failed']} "
+                    f"teams_created={result['teams_created']} teams_already_exists={result['teams_already_exists']} "
+                    f"teams_failed={result['teams_failed']}"
                 )
     except Exception as exc:
         result["error"] = str(exc)
@@ -545,6 +682,7 @@ def execute_registration(
     config = load_config(config_path)
     output = {"warnings": []}
     registration_settings = config.get("registration_settings") or {}
+    team_config = {"create": True, "name": "name", "bio": None, **(config.get("team") or {})}
     clusters = config.get("gzctf", {}).get("clusters") or []
     if not clusters:
         raise typer.BadParameter("config.gzctf.clusters is empty")
@@ -570,6 +708,7 @@ def execute_registration(
                 keep_register_open=keep_register_open,
                 progress_every=progress_every,
                 failure_details=failure_details,
+                team_config=team_config,
                 on_update=persist_current,
             )
         )
