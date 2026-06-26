@@ -5,6 +5,8 @@ registration_defaults:
   phone_column: "联系电话"
 
 account:
+  username: "phone"
+  email: "phone_email"
   email_domain: "zjrcu.com"
   password: "phone_last4"
 

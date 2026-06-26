@@ -51,6 +51,16 @@ def normalize_name(value: Any) -> str:
     return re.sub(r"\s+", "", normalize_text(value))
 
 
+def render_account_value(pattern: str, phone: str, name: str, email_domain: str) -> str:
+    if pattern == "phone":
+        return phone
+    if pattern in {"phone_email", "email"}:
+        return f"{phone}@{email_domain}"
+    if pattern == "name":
+        return name
+    return pattern.format(phone=phone, name=name, email_domain=email_domain)
+
+
 def resolve_path(path_value: str, base_dir: Path) -> Path:
     path = Path(path_value)
     if path.is_absolute():
@@ -109,6 +119,8 @@ def load_registration(
     phone_idx = column_index(headers, reg_cfg["phone_column"])
 
     email_domain = str(account_cfg.get("email_domain", "zjrcu.com")).strip().lstrip("@")
+    username_pattern = str(account_cfg.get("username", "phone"))
+    email_pattern = str(account_cfg.get("email", "phone_email"))
     accounts: list[RegistrationRow] = []
     warnings: list[dict[str, Any]] = []
     seen_usernames: dict[str, int] = {}
@@ -126,7 +138,8 @@ def load_registration(
         if len(phone) < 4:
             warnings.append({"type": "invalid_phone", "row": row_number, "name": name, "phone": phone})
             continue
-        username = f"{phone}@{email_domain}"
+        username = render_account_value(username_pattern, phone=phone, name=name, email_domain=email_domain)
+        email = render_account_value(email_pattern, phone=phone, name=name, email_domain=email_domain)
         if username in seen_usernames:
             warnings.append(
                 {
@@ -146,7 +159,7 @@ def load_registration(
                 unit=unit,
                 department=department,
                 username=username,
-                email=username,
+                email=email,
                 password=phone[-4:],
             )
         )
