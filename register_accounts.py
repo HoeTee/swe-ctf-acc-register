@@ -481,11 +481,13 @@ def run_cluster(
         if original_config is not None and not keep_register_open:
             try:
                 typer.echo(f"[{cluster['name']}] restore platform config")
+                client.login_admin()
                 client.update_platform_config(
                     original_config,
                     method=str(cluster.get("config_update_method", "auto")),
                 )
                 result["config_restored"] = True
+                result.pop("config_restore_error", None)
             except Exception as exc:
                 result["config_restore_error"] = str(exc)
         client.close()

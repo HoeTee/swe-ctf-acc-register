@@ -184,9 +184,12 @@ account-register-result.xlsx
    useCaptcha: false
    emailConfirmationRequired: false
 6. POST /api/account/register 批量注册
-7. 默认恢复原 /api/admin/config
-8. 写入 JSON 和 Excel 结果表
+7. 重新登录管理员账号
+8. 默认恢复原 /api/admin/config
+9. 写入 JSON 和 Excel 结果表
 ```
+
+GZCTF 注册成功后可能会把当前 cookie 登录态切换成新注册用户，所以脚本在恢复平台配置前会重新登录管理员，否则恢复 `/api/admin/config` 可能返回 403。
 
 平台配置更新方法默认自动尝试：
 
