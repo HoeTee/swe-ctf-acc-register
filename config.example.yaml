@@ -8,7 +8,7 @@ account:
   username: "phone"
   email: "phone_email"
   email_domain: "zjrcu.com"
-  password: "phone_last4"
+  password: "zjrcu{phone_last4}"
 
 gzctf:
   clusters:

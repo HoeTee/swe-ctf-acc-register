@@ -7,7 +7,7 @@
 ```text
 用户名 = 手机号
 邮箱   = 手机号 + @zjrcu.com
-密码   = 手机号后四位
+密码   = zjrcu + 手机号后四位
 ```
 
 例如：
@@ -16,7 +16,7 @@
 手机号 15958153463
 用户名 15958153463
 邮箱   15958153463@zjrcu.com
-密码   3463
+密码   zjrcu3463
 ```
 
 ## 文件
@@ -66,7 +66,7 @@ account:
   username: "phone"
   email: "phone_email"
   email_domain: "zjrcu.com"
-  password: "phone_last4"
+  password: "zjrcu{phone_last4}"
 
 gzctf:
   clusters:
@@ -93,6 +93,8 @@ output:
 多个集群就继续在 `gzctf.clusters` 下面增加条目。每个集群可以有不同的 `base_url`、管理员凭据环境变量、报名表路径和 sheet 名称。
 
 `account.username` 默认使用手机号本身。不要把它设置成 `phone_email`，GZCTF 的 `userName` 字段长度限制会拒绝 `15958153463@zjrcu.com` 这类值。
+
+`account.password` 不建议使用 `phone_last4`，因为 GZCTF 当前密码长度策略会拒绝 4 位密码。推荐使用 `zjrcu{phone_last4}`，例如 `zjrcu3463`。
 
 ## 管理员账号
 
