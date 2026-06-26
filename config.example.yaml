@@ -1,0 +1,28 @@
+registration:
+  xlsx_path: "C:/Users/18014/OneDrive/Desktop/AI代码马拉松报名信息.xlsx"
+  sheet_name: "6.24去除重复项"
+  name_column: "姓名"
+  unit_column: "单位"
+  department_column: "部门"
+  phone_column: "联系电话"
+
+account:
+  email_domain: "zjrcu.com"
+  password: "phone_last4"
+
+gzctf:
+  clusters:
+    - name: "cluster-117"
+      base_url: "http://100.99.32.117:8080"
+      admin_username_env: "GZCTF_ADMIN_USERNAME"
+      admin_password_env: "GZCTF_ADMIN_PASSWORD"
+      config_update_method: "auto"
+
+registration_settings:
+  allowRegister: true
+  activeOnRegister: true
+  useCaptcha: false
+  emailConfirmationRequired: false
+
+output:
+  result_file: "account-register-result.json"
