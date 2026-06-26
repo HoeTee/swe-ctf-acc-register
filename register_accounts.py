@@ -217,7 +217,12 @@ class GZCTFClient:
             "password": account.password,
             "email": account.email,
         }
-        response = self.client.post("/api/account/register", json=payload)
+        try:
+            response = self.client.post("/api/account/register", json=payload)
+        except httpx.TimeoutException as exc:
+            return {"status": "failed", "http_status": None, "message": f"timeout: {exc}"}
+        except httpx.HTTPError as exc:
+            return {"status": "failed", "http_status": None, "message": f"http_error: {exc}"}
         text = response.text
         if response.status_code in {200, 201, 204}:
             return {"status": "created", "http_status": response.status_code}
@@ -350,6 +355,7 @@ def run_cluster(
     dry_run: bool,
     limit: int | None,
     keep_register_open: bool,
+    progress_every: int,
 ) -> dict[str, Any]:
     selected_accounts = accounts[:limit] if limit else accounts
     result = {
@@ -377,14 +383,17 @@ def run_cluster(
     client = GZCTFClient(cluster)
     original_config = None
     try:
+        typer.echo(f"[{cluster['name']}] login admin")
         client.login_admin()
+        typer.echo(f"[{cluster['name']}] read platform config")
         original_config = client.get_platform_config()
         enabled_config = build_enabled_registration_config(original_config, registration_settings)
+        typer.echo(f"[{cluster['name']}] enable registration")
         result["config_update_method"] = client.update_platform_config(
             enabled_config,
             method=str(cluster.get("config_update_method", "auto")),
         )
-        for account in selected_accounts:
+        for index, account in enumerate(selected_accounts, start=1):
             register_result = client.register_account(account)
             status = register_result["status"]
             if status == "created":
@@ -399,9 +408,15 @@ def run_cluster(
                     **register_result,
                 }
             )
+            if progress_every > 0 and (index == 1 or index % progress_every == 0 or index == len(selected_accounts)):
+                typer.echo(
+                    f"[{cluster['name']}] {index}/{len(selected_accounts)} "
+                    f"created={result['created']} already_exists={result['already_exists']} failed={result['failed']}"
+                )
     finally:
         if original_config is not None and not keep_register_open:
             try:
+                typer.echo(f"[{cluster['name']}] restore platform config")
                 client.update_platform_config(
                     original_config,
                     method=str(cluster.get("config_update_method", "auto")),
@@ -455,6 +470,8 @@ def execute_registration(
     dry_run: bool,
     limit: int | None,
     keep_register_open: bool,
+    timeout_seconds: float | None,
+    progress_every: int,
 ) -> dict[str, Any]:
     config = load_config(config_path)
     output = {"warnings": []}
@@ -467,6 +484,8 @@ def execute_registration(
     for cluster in clusters:
         accounts, warnings, source = load_registration(config, cluster)
         cluster = dict(cluster)
+        if timeout_seconds is not None:
+            cluster["timeout_seconds"] = timeout_seconds
         cluster["_registration_warnings"] = warnings
         cluster["_registration_source"] = source
         output["clusters"].append(
@@ -477,6 +496,7 @@ def execute_registration(
                 dry_run=dry_run,
                 limit=limit,
                 keep_register_open=keep_register_open,
+                progress_every=progress_every,
             )
         )
 
@@ -496,7 +516,16 @@ def dry_run(
     limit: Annotated[int | None, typer.Option(help="Only process the first N accounts per cluster.")] = None,
 ) -> None:
     """Generate planned account records without calling GZCTF APIs."""
-    echo_json(execute_registration(config_path, dry_run=True, limit=limit, keep_register_open=False))
+    echo_json(
+        execute_registration(
+            config_path,
+            dry_run=True,
+            limit=limit,
+            keep_register_open=False,
+            timeout_seconds=None,
+            progress_every=50,
+        )
+    )
 
 
 @app.command("register")
@@ -507,6 +536,14 @@ def register(
         bool,
         typer.Option(help="Do not restore the original platform registration config."),
     ] = False,
+    timeout_seconds: Annotated[
+        float | None,
+        typer.Option(help="HTTP timeout per request. Overrides cluster.timeout_seconds."),
+    ] = None,
+    progress_every: Annotated[
+        int,
+        typer.Option(help="Print progress every N accounts."),
+    ] = 10,
 ) -> None:
     """Register accounts on every configured GZCTF cluster."""
     echo_json(
@@ -515,6 +552,8 @@ def register(
             dry_run=False,
             limit=limit,
             keep_register_open=keep_register_open,
+            timeout_seconds=timeout_seconds,
+            progress_every=progress_every,
         )
     )
 

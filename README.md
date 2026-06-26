@@ -138,6 +138,20 @@ account-register-result.xlsx
 swe-ctf-acc-register register --config config.yaml
 ```
 
+如果出现网络慢或 timeout，先用小批量验证，并提高单请求超时时间：
+
+```powershell
+swe-ctf-acc-register register --config config.yaml --limit 1 --timeout-seconds 60
+```
+
+确认单个账号成功后，再扩大批量：
+
+```powershell
+swe-ctf-acc-register register --config config.yaml --timeout-seconds 60 --progress-every 20
+```
+
+单个账号注册请求超时会被记录为 `failed`，不会直接终止整批。
+
 执行流程：
 
 ```text
