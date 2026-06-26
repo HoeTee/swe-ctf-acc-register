@@ -38,7 +38,7 @@ account-register-result.xlsx
 ## 安装
 
 ```powershell
-python -m pip install -r requirements.txt
+python -m pip install -e .
 ```
 
 ## 配置
@@ -102,13 +102,13 @@ $env:GZCTF_ADMIN_PASSWORD_117="你的管理员密码"
 只读取 Excel，不调用 GZCTF：
 
 ```powershell
-python register_accounts.py --config config.yaml --check-excel
+swe-ctf-acc-register check-excel --config config.yaml
 ```
 
 显示生成的密码：
 
 ```powershell
-python register_accounts.py --config config.yaml --check-excel --print-passwords
+swe-ctf-acc-register check-excel --config config.yaml --print-passwords
 ```
 
 ## Dry Run
@@ -116,13 +116,13 @@ python register_accounts.py --config config.yaml --check-excel --print-passwords
 生成将要注册的账号列表，但不调用 GZCTF：
 
 ```powershell
-python register_accounts.py --config config.yaml --dry-run
+swe-ctf-acc-register dry-run --config config.yaml
 ```
 
 只看每个集群前 5 个：
 
 ```powershell
-python register_accounts.py --config config.yaml --dry-run --limit 5
+swe-ctf-acc-register dry-run --config config.yaml --limit 5
 ```
 
 Dry run 也会生成结果文件：
@@ -135,7 +135,7 @@ account-register-result.xlsx
 ## 正式注册
 
 ```powershell
-python register_accounts.py --config config.yaml
+swe-ctf-acc-register register --config config.yaml
 ```
 
 执行流程：

@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-import argparse
 import json
 import os
 import re
-import sys
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import httpx
+import typer
 import yaml
 from openpyxl import Workbook, load_workbook
 
 
 DEFAULT_CONFIG = Path("config.yaml")
+app = typer.Typer(no_args_is_help=True, help="Batch-register GZCTF accounts from registration Excel files.")
 
 
 @dataclass
@@ -414,46 +414,54 @@ def run_cluster(
     return result
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Batch-register GZCTF accounts from the AI marathon registration Excel.")
-    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
-    parser.add_argument("--dry-run", action="store_true", help="Generate accounts without calling GZCTF APIs.")
-    parser.add_argument("--check-excel", action="store_true", help="Only read Excel and print generated account summary.")
-    parser.add_argument("--limit", type=int, help="Only process the first N accounts.")
-    parser.add_argument("--keep-register-open", action="store_true", help="Do not restore the original platform config.")
-    parser.add_argument("--print-passwords", action="store_true", help="Print generated passwords in --check-excel output.")
-    args = parser.parse_args()
+def echo_json(value: dict[str, Any]) -> None:
+    typer.echo(json.dumps(value, ensure_ascii=False, indent=2))
 
-    config = load_config(args.config)
+
+@app.command("check-excel")
+def check_excel(
+    config_path: Annotated[Path, typer.Option("--config", "-c", help="Path to config.yaml.")] = DEFAULT_CONFIG,
+    print_passwords: Annotated[bool, typer.Option(help="Print generated passwords in the sample output.")] = False,
+) -> None:
+    """Read each cluster registration sheet and print generated account samples."""
+    config = load_config(config_path)
     output = {
         "warnings": [],
     }
+    clusters = config.get("gzctf", {}).get("clusters") or [{"name": "default"}]
+    output["clusters"] = []
+    for cluster in clusters:
+        accounts, warnings, source = load_registration(config, cluster)
+        output["clusters"].append(
+            {
+                "cluster": cluster.get("name", "default"),
+                "registration_source": source,
+                "total_accounts": len(accounts),
+                "warnings": warnings,
+                "sample": [
+                    account_to_public_dict(account, include_password=print_passwords)
+                    for account in accounts[:20]
+                ],
+            }
+        )
+    echo_json(output)
+    has_warnings = any(cluster.get("warnings") for cluster in output["clusters"])
+    if has_warnings:
+        raise typer.Exit(1)
 
-    if args.check_excel:
-        clusters = config.get("gzctf", {}).get("clusters") or [{"name": "default"}]
-        output["clusters"] = []
-        for cluster in clusters:
-            accounts, warnings, source = load_registration(config, cluster)
-            output["clusters"].append(
-                {
-                    "cluster": cluster.get("name", "default"),
-                    "registration_source": source,
-                    "total_accounts": len(accounts),
-                    "warnings": warnings,
-                    "sample": [
-                        account_to_public_dict(account, include_password=args.print_passwords)
-                        for account in accounts[:20]
-                    ],
-                }
-            )
-        print(json.dumps(output, ensure_ascii=False, indent=2))
-        has_warnings = any(cluster.get("warnings") for cluster in output["clusters"])
-        sys.exit(0 if not has_warnings else 1)
 
+def execute_registration(
+    config_path: Path,
+    dry_run: bool,
+    limit: int | None,
+    keep_register_open: bool,
+) -> dict[str, Any]:
+    config = load_config(config_path)
+    output = {"warnings": []}
     registration_settings = config.get("registration_settings") or {}
     clusters = config.get("gzctf", {}).get("clusters") or []
     if not clusters:
-        raise SystemExit("config.gzctf.clusters is empty")
+        raise typer.BadParameter("config.gzctf.clusters is empty")
 
     output["clusters"] = []
     for cluster in clusters:
@@ -466,9 +474,9 @@ def main() -> None:
                 cluster=cluster,
                 accounts=accounts,
                 registration_settings=registration_settings,
-                dry_run=args.dry_run,
-                limit=args.limit,
-                keep_register_open=args.keep_register_open,
+                dry_run=dry_run,
+                limit=limit,
+                keep_register_open=keep_register_open,
             )
         )
 
@@ -479,13 +487,41 @@ def main() -> None:
     xlsx_file = config.get("output", {}).get("xlsx_file")
     if xlsx_file:
         write_result_workbook(output, resolve_path(xlsx_file, Path(config["_base_dir"])))
+    return output
 
-    print(json.dumps(output, ensure_ascii=False, indent=2))
+
+@app.command("dry-run")
+def dry_run(
+    config_path: Annotated[Path, typer.Option("--config", "-c", help="Path to config.yaml.")] = DEFAULT_CONFIG,
+    limit: Annotated[int | None, typer.Option(help="Only process the first N accounts per cluster.")] = None,
+) -> None:
+    """Generate planned account records without calling GZCTF APIs."""
+    echo_json(execute_registration(config_path, dry_run=True, limit=limit, keep_register_open=False))
+
+
+@app.command("register")
+def register(
+    config_path: Annotated[Path, typer.Option("--config", "-c", help="Path to config.yaml.")] = DEFAULT_CONFIG,
+    limit: Annotated[int | None, typer.Option(help="Only process the first N accounts per cluster.")] = None,
+    keep_register_open: Annotated[
+        bool,
+        typer.Option(help="Do not restore the original platform registration config."),
+    ] = False,
+) -> None:
+    """Register accounts on every configured GZCTF cluster."""
+    echo_json(
+        execute_registration(
+            config_path,
+            dry_run=False,
+            limit=limit,
+            keep_register_open=keep_register_open,
+        )
+    )
 
 
 if __name__ == "__main__":
     try:
-        main()
+        app()
     except Exception as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        typer.echo(f"ERROR: {exc}", err=True)
         raise
