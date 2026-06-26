@@ -7,7 +7,7 @@
 ```text
 用户名 = 手机号
 邮箱   = 手机号 + @zjrcu.com
-密码   = zjrcu + 手机号后四位
+密码   = Zjrcu + 手机号后四位
 ```
 
 例如：
@@ -16,7 +16,7 @@
 手机号 15958153463
 用户名 15958153463
 邮箱   15958153463@zjrcu.com
-密码   zjrcu3463
+密码   Zjrcu3463
 ```
 
 ## 文件
@@ -66,7 +66,7 @@ account:
   username: "phone"
   email: "phone_email"
   email_domain: "zjrcu.com"
-  password: "zjrcu{phone_last4}"
+  password: "Zjrcu{phone_last4}"
 
 gzctf:
   clusters:
@@ -94,7 +94,7 @@ output:
 
 `account.username` 默认使用手机号本身。不要把它设置成 `phone_email`，GZCTF 的 `userName` 字段长度限制会拒绝 `15958153463@zjrcu.com` 这类值。
 
-`account.password` 不建议使用 `phone_last4`，因为 GZCTF 当前密码长度策略会拒绝 4 位密码。推荐使用 `zjrcu{phone_last4}`，例如 `zjrcu3463`。
+`account.password` 不建议使用 `phone_last4`，因为 GZCTF 当前密码策略会拒绝 4 位密码，并且要求包含大写字母。推荐使用 `Zjrcu{phone_last4}`，例如 `Zjrcu3463`。
 
 ## 管理员账号
 
