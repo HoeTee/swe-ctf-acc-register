@@ -5,7 +5,7 @@ import re
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Callable
 
 import httpx
 import typer
@@ -341,6 +341,24 @@ def write_result_workbook(output: dict[str, Any], path: Path) -> None:
     wb.save(path)
 
 
+def write_result_files(config: dict[str, Any], output: dict[str, Any]) -> None:
+    base_dir = Path(config["_base_dir"])
+    output_config = config.get("output") or {}
+    result_file = output_config.get("result_file")
+    if result_file:
+        path = resolve_path(result_file, base_dir)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(output, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    xlsx_file = output_config.get("xlsx_file")
+    if xlsx_file:
+        write_result_workbook(output, resolve_path(xlsx_file, base_dir))
+
+
+def compact_message(value: Any, max_len: int = 240) -> str:
+    text = normalize_text(value).replace("\r", " ").replace("\n", " ")
+    return text[:max_len] + "..." if len(text) > max_len else text
+
+
 def build_enabled_registration_config(original: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
     payload = deepcopy(original)
     for key, value in updates.items():
@@ -356,6 +374,8 @@ def run_cluster(
     limit: int | None,
     keep_register_open: bool,
     progress_every: int,
+    failure_details: int,
+    on_update: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     selected_accounts = accounts[:limit] if limit else accounts
     result = {
@@ -378,10 +398,13 @@ def run_cluster(
             {**account_to_public_dict(account, include_password=True), "status": "planned"}
             for account in selected_accounts
         ]
+        if on_update:
+            on_update(result)
         return result
 
     client = GZCTFClient(cluster)
     original_config = None
+    shown_failures = 0
     try:
         typer.echo(f"[{cluster['name']}] login admin")
         client.login_admin()
@@ -408,11 +431,27 @@ def run_cluster(
                     **register_result,
                 }
             )
+            if status == "failed" and shown_failures < failure_details:
+                shown_failures += 1
+                typer.echo(
+                    f"[{cluster['name']}] failed row={account.row} "
+                    f"name={account.name} username={account.username} "
+                    f"http={register_result.get('http_status')} "
+                    f"message={compact_message(register_result.get('message'))}",
+                    err=True,
+                )
+            if on_update:
+                on_update(result)
             if progress_every > 0 and (index == 1 or index % progress_every == 0 or index == len(selected_accounts)):
                 typer.echo(
                     f"[{cluster['name']}] {index}/{len(selected_accounts)} "
                     f"created={result['created']} already_exists={result['already_exists']} failed={result['failed']}"
                 )
+    except Exception as exc:
+        result["error"] = str(exc)
+        if on_update:
+            on_update(result)
+        raise
     finally:
         if original_config is not None and not keep_register_open:
             try:
@@ -425,6 +464,8 @@ def run_cluster(
             except Exception as exc:
                 result["config_restore_error"] = str(exc)
         client.close()
+        if on_update:
+            on_update(result)
 
     return result
 
@@ -472,6 +513,7 @@ def execute_registration(
     keep_register_open: bool,
     timeout_seconds: float | None,
     progress_every: int,
+    failure_details: int,
 ) -> dict[str, Any]:
     config = load_config(config_path)
     output = {"warnings": []}
@@ -488,6 +530,9 @@ def execute_registration(
             cluster["timeout_seconds"] = timeout_seconds
         cluster["_registration_warnings"] = warnings
         cluster["_registration_source"] = source
+        def persist_current(current_result: dict[str, Any]) -> None:
+            write_result_files(config, {**output, "clusters": [*output["clusters"], current_result]})
+
         output["clusters"].append(
             run_cluster(
                 cluster=cluster,
@@ -497,16 +542,12 @@ def execute_registration(
                 limit=limit,
                 keep_register_open=keep_register_open,
                 progress_every=progress_every,
+                failure_details=failure_details,
+                on_update=persist_current,
             )
         )
 
-    result_file = config.get("output", {}).get("result_file")
-    if result_file:
-        path = resolve_path(result_file, Path(config["_base_dir"]))
-        path.write_text(json.dumps(output, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    xlsx_file = config.get("output", {}).get("xlsx_file")
-    if xlsx_file:
-        write_result_workbook(output, resolve_path(xlsx_file, Path(config["_base_dir"])))
+    write_result_files(config, output)
     return output
 
 
@@ -524,6 +565,7 @@ def dry_run(
             keep_register_open=False,
             timeout_seconds=None,
             progress_every=50,
+            failure_details=0,
         )
     )
 
@@ -544,6 +586,10 @@ def register(
         int,
         typer.Option(help="Print progress every N accounts."),
     ] = 10,
+    failure_details: Annotated[
+        int,
+        typer.Option(help="Print details for the first N failed accounts."),
+    ] = 5,
 ) -> None:
     """Register accounts on every configured GZCTF cluster."""
     echo_json(
@@ -554,6 +600,7 @@ def register(
             keep_register_open=keep_register_open,
             timeout_seconds=timeout_seconds,
             progress_every=progress_every,
+            failure_details=failure_details,
         )
     )
 
